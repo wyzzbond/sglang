@@ -806,13 +806,15 @@ class FlashInferAttnBackend(AttentionBackend):
                 # NOTE: FlashInfer currently has limitations with head_dim = 32 or other dimensions
                 # The FlashInfer head_dim limitation itself is tracked here:
                 # https://github.com/flashinfer-ai/flashinfer/issues/1048
-                o = self.prefill_wrapper_ragged.forward(
-                    q.view(-1, layer.tp_q_head_num, layer.head_dim),
-                    k.view(-1, layer.tp_k_head_num, layer.head_dim),
-                    v.view(-1, layer.tp_v_head_num, layer.head_dim),
-                    causal=causal,
-                    sm_scale=layer.scaling,
-                    logits_soft_cap=logits_soft_cap,
+                o = torch.empty_like(q).view(-1, layer.tp_q_head_num, layer.head_dim)
+                self.prefill_wrapper_ragged._causal = causal
+                self.prefill_wrapper_ragged._sm_scale = layer.scaling
+                self.prefill_wrapper_ragged._logits_soft_cap = logits_soft_cap
+                self.prefill_wrapper_ragged.run_return_lse(
+                    q[:forward_batch.seq_lens_sum].view(-1, layer.tp_q_head_num, layer.head_dim),
+                    k[:forward_batch.seq_lens_sum].view(-1, layer.tp_k_head_num, layer.head_dim),
+                    v[:forward_batch.seq_lens_sum].view(-1, layer.tp_v_head_num, layer.head_dim),
+                    out=o[:forward_batch.seq_lens_sum],
                 )
 
             else:
@@ -821,13 +823,15 @@ class FlashInferAttnBackend(AttentionBackend):
                     # For other models, use causal attention for the ragged part as previously
                     causal = True
 
-                o1, s1 = self.prefill_wrapper_ragged.forward_return_lse(
-                    q.view(-1, layer.tp_q_head_num, layer.head_dim),
-                    k.view(-1, layer.tp_k_head_num, layer.head_dim),
-                    v.view(-1, layer.tp_v_head_num, layer.head_dim),
-                    causal=causal,
-                    sm_scale=layer.scaling,
-                    logits_soft_cap=logits_soft_cap,
+                o1 = torch.empty_like(q).view(-1, layer.tp_q_head_num, layer.head_dim)
+                self.prefill_wrapper_ragged._causal = causal
+                self.prefill_wrapper_ragged._sm_scale = layer.scaling
+                self.prefill_wrapper_ragged._logits_soft_cap = logits_soft_cap
+                _, s1 = self.prefill_wrapper_ragged.run_return_lse(
+                    q[:forward_batch.seq_lens_sum].view(-1, layer.tp_q_head_num, layer.head_dim),
+                    k[:forward_batch.seq_lens_sum].view(-1, layer.tp_k_head_num, layer.head_dim),
+                    v[:forward_batch.seq_lens_sum].view(-1, layer.tp_v_head_num, layer.head_dim),
+                    out=o1[:forward_batch.seq_lens_sum],
                 )
                 o2, s2 = prefill_wrapper_paged.forward_return_lse(
                     q.view(-1, layer.tp_q_head_num, layer.head_dim),
